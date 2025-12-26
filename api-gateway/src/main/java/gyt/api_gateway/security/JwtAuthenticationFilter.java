@@ -1,30 +1,37 @@
 package gyt.api_gateway.security;
 
-import jakarta.servlet.FilterChain;
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.context.ReactiveSecurityContextHolder;
 import org.springframework.stereotype.Component;
-import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.server.ServerWebExchange;
+import org.springframework.web.server.WebFilter;
+import org.springframework.web.server.WebFilterChain;
+import reactor.core.publisher.Mono;
 
-import java.io.IOException;
 import java.util.Collections;
 
 @Component
-@RequiredArgsConstructor
-public class JwtAuthenticationFilter extends OncePerRequestFilter {
+public class JwtAuthenticationFilter implements WebFilter {
 
     private final JwtUtil jwtUtil;
 
-    @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
-            throws ServletException, IOException {
+    public JwtAuthenticationFilter(JwtUtil jwtUtil) {
+        this.jwtUtil = jwtUtil;
+    }
 
-        String authHeader = request.getHeader("Authorization");
+    @Override
+    public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
+        ServerHttpRequest request = exchange.getRequest();
+
+        if (request.getURI().getPath().startsWith("/auth/")) {
+            return chain.filter(exchange);
+        }
+
+        String authHeader = request.getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             String token = authHeader.substring(7);
@@ -34,13 +41,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 String role = jwtUtil.extractRole(token);
 
                 SimpleGrantedAuthority authority = new SimpleGrantedAuthority("ROLE_" + role);
-                UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(username,
-                        null, Collections.singletonList(authority));
+                Authentication auth = new UsernamePasswordAuthenticationToken(username, null,
+                        Collections.singletonList(authority));
 
-                SecurityContextHolder.getContext().setAuthentication(authentication);
+                return chain.filter(exchange)
+                        .contextWrite(ReactiveSecurityContextHolder.withAuthentication(auth));
             }
         }
 
-        filterChain.doFilter(request, response);
+        return chain.filter(exchange);
     }
 }
